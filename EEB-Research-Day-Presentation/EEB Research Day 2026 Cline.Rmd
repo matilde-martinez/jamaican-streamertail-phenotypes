@@ -1,0 +1,438 @@
+---
+title: "EEB Research Day 2026 - Streamertail Cline"
+author: "Matilde Martinez-Navarrete"
+date: "2026-05-18"
+output: html_document
+---
+
+EEB Research Day 2026 - Streamertail Clines
+Code adapted from Aguillon et al. (2022)
+
+
+```{r}
+#loading packages
+
+library("tidyverse")
+library("nlstools")
+library("geosphere")
+library("sf")
+library("ggplot2")
+library("mapview")
+
+```
+
+
+```{r}
+#loading and subsetting datasets
+
+locations <- read.csv("C:/Users/matil/OneDrive/Desktop/Aguillon Lab/Gary + LSU Scorings.xlsx - M&F.csv")
+
+red.prop.dorsal <- read.csv("C:/Users/matil/OneDrive/Desktop/dorsal recolorize/updated.dorsal.red.prop.df.csv")
+
+dorsal.cline.df <- as.data.frame(cbind(red.prop.dorsal$samples..AS.THEY.APPEAR.IN.MASTER.GOOGLE.SHEETS., red.prop.dorsal$red.prop, locations$LONG_DEC, locations$LAT_DEC, locations$CORRECT_NUMERIC_SITES))
+colnames(dorsal.cline.df) <- c("ID NUMBER", "PROP.RED", "LONGITUDE", "LATITUDE", "SITES")
+dorsal.cline.df <- dorsal.cline.df[!is.na(dorsal.cline.df$LONGITUDE), ]
+dorsal.cline.df <- dorsal.cline.df[!is.na(dorsal.cline.df$PROP.RED), ]
+
+dorsal.cline.df$SITES <- as.numeric(dorsal.cline.df$SITES)
+dorsal.cline.df$PROP.RED <- as.numeric(dorsal.cline.df$PROP.RED)
+dorsal.cline.df$LONGITUDE <- as.numeric(dorsal.cline.df$LONGITUDE)
+dorsal.cline.df$LATITUDE <- as.numeric(dorsal.cline.df$LATITUDE)
+
+```
+
+
+```{r}
+#summarizing lat, long, and phenotype by site
+
+cline_summary <- dorsal.cline.df |>
+  group_by(SITES)|>
+  summarize(samples = n(),
+            red.prop_mean = mean(PROP.RED),
+            red.prop_se = sd(PROP.RED/12)/samples,
+            long_mean = mean(LONGITUDE),
+            lat_mean = mean(LATITUDE)) |>
+  arrange(SITES)
+
+cline_summary
+
+```
+
+
+```{r}
+#calculating the distance between sites
+
+mlat <- mean(cline_summary$lat_mean)
+
+s1 <- c(cline_summary$long_mean[1], mlat)
+
+distance <- c()
+for(i in 1:nrow(cline_summary)){
+  distance[i] <- distm(s1, c(cline_summary$long_mean[i], mlat))/1000
+}
+distance
+
+```
+
+
+```{r}
+#mapping & adding distance into the data frame
+
+cline_summary$mlat <- rep(mlat, times = 12)
+
+mapview(cline_summary, xcol = "long_mean", ycol = "lat_mean", col.regions = c("darkgreen"), crs = 4269, grid = FALSE) +
+  mapview(cline_summary, xcol = "long_mean", ycol = "mlat", col.regions = c("red"), crs = 4269, grid = FALSE)
+
+cline_summary$distance <- distance
+
+```
+
+
+```{r}
+#evaluating phenotype
+
+max_value <- 1
+rhs <- function(x, c, w) {
+  max_value/(1+exp((4*(x-c))/w))
+}
+
+phenotype_model <- nls(red.prop_mean ~ rhs(distance, center, width),
+                 data = cline_summary,
+                 start = list(center = max(cline_summary$distance)/2, width = max(cline_summary$distance)/2),
+                 control = list(maxiter = 500),
+                 trace = T)
+
+```
+
+
+```{r}
+
+summary(phenotype_model)
+phenotype_summary <- summary(phenotype_model)
+coef(phenotype_model)
+
+```
+
+
+```{r}
+
+#CI_phenotype_model <- confint(phenotype_model, parm = c("center", "width"))
+
+boot_CI_phenotype_model <- nlsBoot(phenotype_model, niter = 999)
+
+```
+
+
+```{r}
+ggplot() +
+  geom_pointrange(data=cline_summary,aes(x=distance,y=red.prop_mean,ymin=red.prop_mean-red.prop_se,ymax=red.prop_mean+red.prop_se),color="black",shape=16) +
+  geom_smooth(data=cline_summary, aes(x=distance,y=red.prop_mean), method="nls", formula=y~1/(1+exp((4*(x-c))/w)), se=FALSE, method.args=list(start=list(c=max(cline_summary$distance)/2,w=max(cline_summary$distance)/2)), color="black") +
+  ylim(c(-0.01,1.3)) +
+  xlim(c(0,max(cline_summary$distance))) +
+  xlab("Distance (km)") +
+  ylab("Proportion of Red") +
+  theme_classic() +
+  theme(axis.title=element_text(face="bold",size=12), axis.text=element_text(size=10,color="black"))
+  #geom_rect(aes(xmin = boot_CI_phenotype_model[1,1], xmax = boot_CI_phenotype_model[1,2], ymin = 1.1, ymax = 1.2), fill = NA, color = "black") + geom_segment(aes(x = phenotype_summary$parameters[1,1], y = 1.1, yend = 1.2), color = "black", lwd = 1)
+
+
+```
+
+
+```{r}
+#cline without Location 1: cline summary
+
+dorsal.cline.df_minus1 <- dorsal.cline.df[dorsal.cline.df$SITES != 1, ]
+cline_summary_minus1 <- dorsal.cline.df_minus1 |>
+  group_by(SITES)|>
+  summarize(samples = n(),
+            red.prop_mean = mean(PROP.RED),
+            red.prop_se = sd(PROP.RED)/samples,
+            long_mean = mean(LONGITUDE),
+            lat_mean = mean(LATITUDE)) |>
+  arrange(SITES)
+
+cline_summary_minus1
+
+```
+
+
+```{r}
+#cline without Location 1: finding distances
+
+mlat_minus1 <- mean(cline_summary_minus1$lat_mean)
+
+s2 <- c(cline_summary_minus1$long_mean[1], mlat_minus1)
+
+distance_minus1 <- c()
+for(i in 1:nrow(cline_summary_minus1)){
+  distance_minus1[i] <- distm(s2, c(cline_summary_minus1$long_mean[i], mlat_minus1))/1000
+}
+distance_minus1
+
+```
+
+
+
+```{r}
+#cline without Location 1: mapping distances
+
+cline_summary_minus1$mlat_minus1 <- rep(mlat_minus1, times = 11)
+
+mapview(cline_summary_minus1, xcol = "long_mean", ycol = "lat_mean", col.regions = c("darkgreen"), crs = 4269, grid = FALSE) +
+  mapview(cline_summary_minus1, xcol = "long_mean", ycol = "mlat_minus1", col.regions = c("red"), crs = 4269, grid = FALSE)
+
+cline_summary_minus1$distance_minus1 <- distance_minus1
+
+```
+
+
+```{r}
+#cline without Location 1: making cline
+
+ggplot() +
+  geom_pointrange(data=cline_summary_minus1,aes(x=distance_minus1,y=red.prop_mean,ymin=red.prop_mean-red.prop_se,ymax=red.prop_mean+red.prop_se),color="black",shape=16) +
+  #geom_smooth(data=cline_summary_minus1, aes(x=distance_minus1,y=red.prop_mean), method="nls", formula=y~1/(1+exp((4*(x-c))/w)), se=FALSE, method.args=list(start=list(c=max(cline_summary_minus1$distance_minus1)/2,w=max(cline_summary_minus1$distance_minus1)/2)), color="black") +
+  ylim(c(-0.01,1.0)) +
+  xlim(c(0,max(cline_summary_minus1$distance_minus1))) +
+  xlab("Distance (km)") +
+  ylab("Proportion of Red") +
+  theme_classic() +
+  theme(axis.title=element_text(face="bold",size=12), axis.text=element_text(size=10,color="black"))
+
+```
+
+
+```{r}
+
+cline_summary_minus1$max_red <- cline_summary_minus1$red.prop_mean/(max(cline_summary_minus1$red.prop_mean))
+
+ggplot() +
+  geom_pointrange(data=cline_summary_minus1,aes(x=distance_minus1,y=max_red,ymin=max_red-red.prop_se,ymax=max_red+red.prop_se),color="black",shape=16) +
+  geom_smooth(data=cline_summary_minus1, aes(x=distance_minus1,y=max_red), method="nls", formula=y~1/(1+exp((4*(x-c))/w)), se=FALSE, method.args=list(start=list(c=max(cline_summary_minus1$distance_minus1),w=max(cline_summary_minus1$distance_minus1))), color="black") +
+  scale_y_continuous(labels = function(x) x*(max(cline_summary_minus1$red.prop_mean)), 
+                     breaks = c(0, 0.25/max(cline_summary_minus1$red.prop_mean), 0.5/max(cline_summary_minus1$red.prop_mean), 0.75/max(cline_summary_minus1$red.prop_mean), 1/max(cline_summary_minus1$red.prop_mean))) +
+  xlim(c(0,max(cline_summary_minus1$distance_minus1))) +
+  xlab("Distance (km)") +
+  ylab("Proportion of Red") +
+  theme_classic() +
+  theme(axis.title=element_text(face="bold",size=12), axis.text=element_text(size=10,color="black"))
+
+
+```
+
+
+
+```{r}
+#VENTRAL RECOLORIZE
+
+red.prop.ventral.RECOLORIZE <- read.csv("C:/Users/matil/OneDrive/Desktop/ventral recolorize/updated.four.color.ventral.red.prop.df.csv")
+
+ventral.cline.df <- as.data.frame(cbind(red.prop.ventral.RECOLORIZE$samples..AS.THEY.APPEAR.IN.MASTER.GOOGLE.SHEETS., red.prop.ventral.RECOLORIZE$red.prop))
+ventral.cline.df <- ventral.cline.df[1:204, ]
+colnames(ventral.cline.df) <- c("ID NUMBER", "PROP.RED")
+ventral.cline.df$LONGITUDE <- locations$LONG_DEC
+ventral.cline.df$LATITUDE <- locations$LAT_DEC
+ventral.cline.df$SITES <- locations$CORRECT_NUMERIC_SITES
+
+ventral.cline.df <- ventral.cline.df[!is.na(ventral.cline.df$LONGITUDE), ]
+ventral.cline.df <- ventral.cline.df[!is.na(ventral.cline.df$PROP.RED), ]
+
+ventral.cline.df$SITES <- as.numeric(ventral.cline.df$SITES)
+ventral.cline.df$PROP.RED <- as.numeric(ventral.cline.df$PROP.RED)
+ventral.cline.df$LONGITUDE <- as.numeric(ventral.cline.df$LONGITUDE)
+ventral.cline.df$LATITUDE <- as.numeric(ventral.cline.df$LATITUDE)
+
+ventral.cline.df <- ventral.cline.df[ventral.cline.df$SITES != 1, ]
+ventral_cline_summary <- ventral.cline.df |>
+  group_by(SITES)|>
+  summarize(samples = n(),
+            red.prop_mean = mean(PROP.RED),
+            red.prop_se = sd(PROP.RED)/samples,
+            long_mean = mean(LONGITUDE),
+            lat_mean = mean(LATITUDE)) |>
+  arrange(SITES)
+ventral_cline_summary$distance_minus1 <- distance_minus1[c(1:8, 10:11)]
+
+
+ventral_cline_summary$max_red <- ventral_cline_summary$red.prop_mean/(max(ventral_cline_summary$red.prop_mean))
+
+ggplot() +
+  geom_pointrange(data=ventral_cline_summary,aes(x=distance_minus1,y=max_red,ymin=max_red-red.prop_se,ymax=max_red+red.prop_se),color="black",shape=16) +
+  geom_smooth(data=ventral_cline_summary, aes(x=distance_minus1,y=max_red), method="nls", formula=y~1/(1+exp((4*(x-c))/w)), se=FALSE, method.args=list(start=list(c=max(ventral_cline_summary$distance_minus1),w=max(ventral_cline_summary$distance_minus1))), color="black") +
+  scale_y_continuous(labels = function(x) x*(max(ventral_cline_summary$red.prop_mean)), 
+                     breaks = c(0, 0.25/max(ventral_cline_summary$red.prop_mean), 0.5/max(ventral_cline_summary$red.prop_mean), 0.75/max(ventral_cline_summary$red.prop_mean), 1/max(ventral_cline_summary$red.prop_mean))) +
+  xlim(c(0,max(ventral_cline_summary$distance_minus1))) +
+  xlab("Distance (km)") +
+  ylab("Proportion of Red") +
+  theme_classic() +
+  theme(axis.title=element_text(face="bold",size=12), axis.text=element_text(size=10,color="black"))
+
+
+```
+
+
+
+```{r}
+#RECOLORIZE CLINE WITH DORSAL AND VENTRAL DATA
+
+ggplot() +
+  geom_pointrange(data=cline_summary_minus1,aes(x=distance_minus1,y=max_red,ymin=max_red-red.prop_se,ymax=max_red+red.prop_se),color="black",shape=16) +
+  geom_pointrange(data=ventral_cline_summary,aes(x=distance_minus1,y=max_red,ymin=max_red-red.prop_se,ymax=max_red+red.prop_se),color="dodgerblue",shape=15) +
+  geom_smooth(data=cline_summary_minus1, aes(x=distance_minus1,y=max_red), method="nls", formula=y~1/(1+exp((4*(x-c))/w)), se=FALSE, method.args=list(start=list(c=max(cline_summary_minus1$distance_minus1),w=max(cline_summary_minus1$distance_minus1))), color="black") +
+  geom_smooth(data=ventral_cline_summary, aes(x=distance_minus1,y=max_red), method="nls", formula=y~1/(1+exp((4*(x-c))/w)), se=FALSE, method.args=list(start=list(c=max(ventral_cline_summary$distance_minus1),w=max(ventral_cline_summary$distance_minus1))), color="dodgerblue") +
+  scale_y_continuous(labels = function(x) x*(max(cline_summary_minus1$red.prop_mean)), 
+                     breaks = c(0, 0.25/max(cline_summary_minus1$red.prop_mean), 0.5/max(cline_summary_minus1$red.prop_mean), 0.75/max(cline_summary_minus1$red.prop_mean), 1/max(cline_summary_minus1$red.prop_mean))) +
+  xlim(c(0,max(cline_summary_minus1$distance_minus1))) +
+  xlab("Distance (km)") +
+  ylab("Proportion of Red") +
+  theme_classic() +
+  theme(axis.title=element_text(face="bold",size=12), axis.text=element_text(size=10,color="black"))
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+max_value_minus1 <- 1
+rhs_minus1 <- function(x, c, w) {
+  max_value_minus1/(1+exp((4*(x-c))/w))
+}
+
+phenotype_model_minus1 <- nls(red.prop_mean ~ rhs_minus1(distance, center, width),
+                 data = cline_summary_minus1,
+                 start = list(center = max(cline_summary_minus1$distance_minus1)/2, width = max(cline_summary_minus1$distance_minus1)/2),
+                 control = list(maxiter = 500),
+                 trace = T)
+
+
+summary(phenotype_model_minus1)
+phenotype_summary_minus1 <- summary(phenotype_model_minus1)
+coef(phenotype_model_minus1)
+
+
+boot_CI_phenotype_model_minus1 <- nlsBoot(phenotype_model_minus1, niter = 999)
+
+
+```
+
+
+```{r}
+
+mapview(cline_summary, xcol = "long_mean", ycol = "lat_mean", col.regions = c("red"), crs = 4269, grid = FALSE)
+
+jamaica <- mapview(cline_summary, xcol = "long_mean", ycol = "lat_mean", col.regions = c("red"), crs = 4269, grid = FALSE)
+
+library("webshot")
+
+mapshot(jamaica, file = "C:/Users/matil/Downloads/jamaica_locationstwo.pdf")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+#DORSAL IMAGEJ
+
+ImageJ_data <- read.csv("C:/Users/matil/OneDrive/Desktop/Aguillon Lab/Streamertail Bill Measurements - COMBINED.csv")
+IJ_dorsal.df <- as.data.frame(cbind(ImageJ_data$Prep_number, ImageJ_data$Dorsal_percent_of_red, locations$LONG_DEC, locations$LAT_DEC, locations$CORRECT_NUMERIC_SITES))
+colnames(IJ_dorsal.df) <- c("ID NUMBER", "PROP.RED", "LONGITUDE", "LATITUDE", "SITES")
+IJ_dorsal.df <- IJ_dorsal.df[!is.na(IJ_dorsal.df$LONGITUDE), ]
+IJ_dorsal.df <- IJ_dorsal.df[!is.na(IJ_dorsal.df$PROP.RED), ]
+
+IJ_dorsal.df$SITES <- as.numeric(IJ_dorsal.df$SITES)
+IJ_dorsal.df$PROP.RED <- as.numeric(IJ_dorsal.df$PROP.RED)
+IJ_dorsal.df$LONGITUDE <- as.numeric(IJ_dorsal.df$LONGITUDE)
+IJ_dorsal.df$LATITUDE <- as.numeric(IJ_dorsal.df$LATITUDE)
+
+IJ_dorsal.df <- IJ_dorsal.df[IJ_dorsal.df$SITES != 1, ]
+IJ_dorsal_cline_summary <- IJ_dorsal.df |>
+  group_by(SITES)|>
+  summarize(samples = n(),
+            red.prop_mean = mean(PROP.RED),
+            red.prop_se = sd(PROP.RED)/samples,
+            long_mean = mean(LONGITUDE),
+            lat_mean = mean(LATITUDE)) |>
+  arrange(SITES)
+IJ_dorsal_cline_summary$distance_minus1 <- distance_minus1
+
+ggplot() +
+  geom_pointrange(data=IJ_dorsal_cline_summary,aes(x=distance_minus1,y=red.prop_mean,ymin=red.prop_mean-red.prop_se,ymax=red.prop_mean+red.prop_se),color="black",shape=16) +
+  geom_smooth(data=IJ_dorsal_cline_summary, aes(x=distance_minus1,y=red.prop_mean), method="nls", formula=y~1/(1+exp((4*(x-c))/w)), se=FALSE, method.args=list(start=list(c=max(IJ_dorsal_cline_summary$distance_minus1)/2,w=max(IJ_dorsal_cline_summary$distance_minus1)/2)), color="black") +
+  ylim(c(-0.01,1.3)) +
+  xlim(c(0,max(IJ_dorsal_cline_summary$distance_minus1))) +
+  xlab("Distance (km)") +
+  ylab("Proportion of Red") +
+  theme_classic() +
+  theme(axis.title=element_text(face="bold",size=12), axis.text=element_text(size=10,color="black"))
+
+
+```
+
+
+```{r}
+#VENTRAL IMAGEJ
+
+IJ_ventral.df <- as.data.frame(cbind(ImageJ_data$Prep_number, ImageJ_data$Ventral_percent_of_red, locations$LONG_DEC, locations$LAT_DEC, locations$CORRECT_NUMERIC_SITES))
+colnames(IJ_ventral.df) <- c("ID NUMBER", "PROP.RED", "LONGITUDE", "LATITUDE", "SITES")
+IJ_ventral.df <- IJ_ventral.df[!is.na(IJ_ventral.df$LONGITUDE), ]
+IJ_ventral.df <- IJ_ventral.df[!is.na(IJ_ventral.df$PROP.RED), ]
+
+IJ_ventral.df$SITES <- as.numeric(IJ_ventral.df$SITES)
+IJ_ventral.df$PROP.RED <- as.numeric(IJ_ventral.df$PROP.RED)
+IJ_ventral.df$LONGITUDE <- as.numeric(IJ_ventral.df$LONGITUDE)
+IJ_ventral.df$LATITUDE <- as.numeric(IJ_ventral.df$LATITUDE)
+
+IJ_ventral.df <- IJ_ventral.df[IJ_ventral.df$SITES != 1, ]
+IJ_ventral_cline_summary <- IJ_ventral.df |>
+  group_by(SITES)|>
+  summarize(samples = n(),
+            red.prop_mean = mean(PROP.RED),
+            red.prop_se = sd(PROP.RED)/samples,
+            long_mean = mean(LONGITUDE),
+            lat_mean = mean(LATITUDE)) |>
+  arrange(SITES)
+IJ_ventral_cline_summary$distance_minus1 <- distance_minus1
+
+ggplot() +
+  geom_pointrange(data=IJ_ventral_cline_summary,aes(x=distance_minus1,y=red.prop_mean,ymin=red.prop_mean-red.prop_se,ymax=red.prop_mean+red.prop_se),color="black",shape=16) +
+  geom_smooth(data=IJ_ventral_cline_summary, aes(x=distance_minus1,y=red.prop_mean), method="nls", formula=y~1/(1+exp((4*(x-c))/w)), se=FALSE, method.args=list(start=list(c=max(IJ_ventral_cline_summary$distance_minus1)/2,w=max(IJ_ventral_cline_summary$distance_minus1)/2)), color="black") +
+  ylim(c(-0.01,1.3)) +
+  xlim(c(0,max(IJ_ventral_cline_summary$distance_minus1))) +
+  xlab("Distance (km)") +
+  ylab("Proportion of Red") +
+  theme_classic() +
+  theme(axis.title=element_text(face="bold",size=12), axis.text=element_text(size=10,color="black"))
+
+
+
+
+```
+
+
+
+
+
+
+
